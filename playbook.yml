@@ -1,0 +1,7 @@
+---
+- hosts: all
+  roles:
+    - ha-monitoring
+  vars:
+    tg_bot_token: ''
+    tg_chat_id: 

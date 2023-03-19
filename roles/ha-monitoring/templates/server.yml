@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+
+  grafana:
+    image: grafana/grafana:9.3.6-ubuntu
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./configs/grafana/datasources:/etc/grafana/provisioning/datasources/
+      - ./configs/grafana/dashboards:/etc/grafana/provisioning/dashboards/
+
+  prometheus:
+    image: prom/prometheus:v2.42.0
+    ports:
+      - "9090:9090"   
+    command: 
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"      
+      - "--web.external-url=http://{{ inventory_hostname }}:9090"     
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries" 
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    volumes:
+      - prom-data:/prometheus
+      - ./configs/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml
+      - ./configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+
+  thanos-sidecar:
+    image: quay.io/thanos/thanos:v0.30.2
+    volumes:
+        - prom-data:/prometheus
+    command:
+        - 'sidecar'
+        - '--tsdb.path=/prometheus'
+        - '--prometheus.url=http://prometheus:9090'     
+    ports:
+      - 10901:10901        
+      - 10902:10902
+
+  thanos-querier:
+    image: quay.io/thanos/thanos:v0.30.2
+    command:
+      - 'query'    
+      - "--alert.query-url=http://{{ inventory_hostname }}:9095"       
+      - '--query.replica-label=replica'        
+      - '--http-address=0.0.0.0:9095'            
+      - "--store={{ groups['servers'][1] }}:10901"
+      - "--store={{ groups['servers'][0] }}:10901"
+    ports:
+      - 9095:9095     
+
+  alertmanager:
+    image: prom/alertmanager:v0.25.0
+    ports:
+      - "9093:9093"
+      - "9094:9094"
+    command: 
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+      - "--web.external-url=http://{{ inventory_hostname }}:9093"
+{% if 'inventory_hostname' == groups['servers'][0] %}
+      - "--cluster.peer={{ groups['servers'][1] }}:9094"      
+{% else %}
+      - "--cluster.peer={{ groups['servers'][0] }}:9094"      
+{% endif %}        
+    volumes:
+      - alert-data:/alertmanager
+      - ./configs/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+
+volumes:
+  grafana-data:
+  prom-data:
+  alert-data:

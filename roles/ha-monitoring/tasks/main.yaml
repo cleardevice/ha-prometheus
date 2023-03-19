@@ -1,0 +1,79 @@
+- name: Initialize docker swarm mode
+  ansible.builtin.shell: docker swarm init
+  args:
+    creates: ~/.ansible_swarm_initialized
+  register: result
+
+- name: Create a file if previous command succeeded
+  ansible.builtin.file:
+    path: ~/.ansible_swarm_initialized
+    state: touch 
+  when: result is succeeded    
+
+- name: Create a directory for docker if it does not exist
+  ansible.builtin.file:
+    path: /srv/monitoring
+    state: directory
+    mode: '0755'  
+
+- name: Copy server.yml docker stack
+  ansible.builtin.template:
+    src: server.yml
+    dest: /srv/monitoring/server.yml
+  when: inventory_hostname in groups['servers']
+
+- name: Copy exporter.yml docker stack
+  ansible.builtin.template:
+    src: exporter.yml
+    dest: /srv/monitoring/exporter.yml
+
+- name: Ensure configs directory structure exists (templates folder)
+  ansible.builtin.file:
+    path: '/srv/monitoring/configs/{{ item.path }}'
+    state: directory
+  with_community.general.filetree: templates/configs/
+  when: 
+  - item.state == 'directory'
+  - inventory_hostname in groups['servers']  
+
+- name: Ensure config files are populated from templates
+  ansible.builtin.template:
+    src: '{{ item.src }}'
+    dest: '/srv/monitoring/configs/{{ item.path }}'
+  with_community.general.filetree: templates/configs/
+  when: 
+  - item.state == 'file'
+  - inventory_hostname in groups['servers']
+
+
+# We need to put grafana configs from 'files' folder because
+# dashboards json contain strings which are interpreted by ansible as variables
+- name: Ensure configs directory structure exists (files folder)
+  ansible.builtin.file:
+    path: '/srv/monitoring/configs/{{ item.path }}'
+    state: directory
+  with_community.general.filetree: configs/
+  when: 
+  - item.state == 'directory'
+  - inventory_hostname in groups['servers']  
+
+- name: Ensure config files are copied from files
+  ansible.builtin.copy:
+    src: '{{ item.src }}'
+    dest: '/srv/monitoring/configs/{{ item.path }}'
+  with_community.general.filetree: configs/
+  when: 
+  - item.state == 'file'
+  - inventory_hostname in groups['servers']
+
+
+- name: Deploy server stack
+  ansible.builtin.shell: docker stack deploy -c server.yml monitoring
+  args:
+    chdir: /srv/monitoring/
+  when: inventory_hostname in groups['servers']    
+
+- name: Deploy exporter stack
+  ansible.builtin.shell: docker stack deploy -c exporter.yml exporter
+  args:
+    chdir: /srv/monitoring/
